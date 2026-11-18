@@ -60,7 +60,37 @@ local function assert_balanced()
   end
   assert(widths.current and widths.source and math.abs(widths.current - widths.source) <= 1)
 end
+local starting_issue_window = vim.api.nvim_get_current_win()
 assert_balanced()
+-- K opens the commit under the cursor in a floating, scrollable preview.
+local source_panel
+for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+  if vim.wo[win].winbar:find("Source:", 1, true) then
+    source_panel = win
+  end
+end
+local original_run = git_summary.run
+local preview_callback
+git_summary.run = function(_, args, callback)
+  assert(args[#args] == "aaaaaaaa")
+  preview_callback = callback
+end
+vim.api.nvim_set_current_win(source_panel)
+vim.api.nvim_win_set_cursor(source_panel, { 2, 0 })
+vim.fn.feedkeys("K", "xt")
+assert(preview_callback, "K should request the current commit")
+local preview_win = vim.api.nvim_get_current_win()
+assert(vim.api.nvim_win_get_config(preview_win).relative == "editor")
+assert(vim.wo[preview_win].winhighlight == "FloatBorder:GitBranchCompareMerged")
+assert(vim.api.nvim_buf_get_lines(0, 0, -1, false)[1]:find("Loading", 1, true))
+preview_callback("commit aaaaaaaa\nAuthor: Test\n\ndiff --git a/a b/a\n+added", nil)
+assert(vim.bo.filetype == "git")
+assert(table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n"):find("+added", 1, true))
+vim.fn.feedkeys("q", "xt")
+assert(vim.api.nvim_get_current_win() == source_panel)
+assert(vim.fn.maparg("d", "n", false, true).buffer ~= 1)
+git_summary.run = original_run
+vim.api.nvim_set_current_win(starting_issue_window)
 assert(vim.bo.filetype == "gitbranchissues")
 assert(vim.api.nvim_buf_get_name(0):find("Issues", 1, true))
 local summary_found = false
@@ -391,7 +421,7 @@ for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
     assert(not vim.wo[win].cursorline)
     assert(vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win)) == 1)
     assert(title:find("%#GitBranchCompareCurrent#", 1, true))
-    assert(title:find("(d)%#Comment#iff", 1, true))
+    assert(title:find("(K)%#Comment# details", 1, true))
     assert(title:find("%#Comment#", 1, true))
     assert(title:find("%#GitBranchCompareKeys#(", 1, true))
     assert(vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(win)):find("Current", 1, true))
@@ -653,7 +683,7 @@ for _, role_name in ipairs({ "Issues", "Current", "Source" }) do
     assert(vim.fn.maparg("<Space>", "n", false, true).buffer ~= 1)
     vim.fn.feedkeys("g?", "xt")
     local current_help = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
-    assert(current_help:find("commit message and diff", 1, true))
+    assert(current_help:find("commit details and diff", 1, true))
     assert(current_help:find("Equivalent change included", 1, true))
     assert(not current_help:find("Select or deselect", 1, true))
     assert(not current_help:find("Close comparison", 1, true))

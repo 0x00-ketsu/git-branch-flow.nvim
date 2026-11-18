@@ -371,13 +371,14 @@ function M.open(data)
     vim.wo[target_win].winbar = "%#GitBranchCompareCurrent# Current: "
       .. esc(data.branch)
       .. (" (%d)"):format(math.floor((#state.rows.target + 1) / 3))
-      .. " %#GitBranchCompareKeys#(d)%#Comment#iff "
+      .. " %#GitBranchCompareKeys#(K)%#Comment# details "
       .. "%#GitBranchCompareKeys#(D)%#Comment#eps "
       .. "%#GitBranchCompareKeys#(y)%#Comment#ank"
     vim.wo[source_win].winbar = "%#GitBranchCompareSource# Source: "
       .. esc(data.source_ref)
       .. (" (%d)"):format(math.floor((#state.rows.source + 1) / 3))
       .. " %#GitBranchCompareKeys#(Space)%#Comment# select "
+      .. "%#GitBranchCompareKeys#(K)%#Comment# details "
       .. "%#GitBranchCompareKeys#(p)%#Comment#ick "
       .. "%#GitBranchCompareKeys#(r)%#Comment#efresh "
       .. "%#GitBranchCompareKeys#(y)%#Comment#ank"
@@ -702,30 +703,64 @@ function M.open(data)
     local rows = win == source_win and state.rows.source or win == target_win and state.rows.target
     return rows and rows[vim.api.nvim_win_get_cursor(win)[1] - 1]
   end
+  ---Show the commit under the cursor in a resizable floating preview.
   local function preview()
     local item = current_commit()
     if not item then
       return
     end
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[buf].bufhidden = "wipe"
+    vim.bo[buf].buftype = "nofile"
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "Loading commit details…" })
+    vim.bo[buf].modifiable = false
+    local function dimensions()
+      local width = math.max(1, math.min(vim.o.columns - 2, math.floor(vim.o.columns * 0.7)))
+      local height = math.max(1, math.min(vim.o.lines - 2, math.floor(vim.o.lines * 0.8)))
+      return {
+        relative = "editor",
+        row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1),
+        col = math.max(0, math.floor((vim.o.columns - width) / 2)),
+        width = width,
+        height = height,
+        style = "minimal",
+        border = "rounded",
+        title = " Commit details ",
+      }
+    end
+    local win = vim.api.nvim_open_win(buf, true, dimensions())
+    vim.wo[win].winhighlight = "FloatBorder:GitBranchCompareMerged"
+    vim.wo[win].wrap = false
+    for _, key in ipairs({ "q", "<Esc>" }) do
+      vim.keymap.set("n", key, function()
+        if vim.api.nvim_win_is_valid(win) then
+          vim.api.nvim_win_close(win, true)
+        end
+      end, { buffer = buf, desc = "Close commit preview" })
+    end
+    vim.api.nvim_create_autocmd("VimResized", {
+      callback = function()
+        if not vim.api.nvim_win_is_valid(win) then
+          return true
+        end
+        vim.api.nvim_win_set_config(win, dimensions())
+      end,
+    })
     git.run(
       data.root,
       { "show", "--no-ext-diff", "--format=fuller", "--stat", "--patch", item.sha },
       function(out, err)
-        if err then
-          return vim.notify(err, vim.log.levels.ERROR)
-        end
-        if not vim.api.nvim_tabpage_is_valid(tab) or vim.api.nvim_get_current_tabpage() ~= tab then
+        if not vim.api.nvim_win_is_valid(win) or not vim.api.nvim_buf_is_valid(buf) then
           return
         end
-        local buf = vim.api.nvim_create_buf(false, true)
-        vim.bo[buf].bufhidden = "wipe"
-        vim.bo[buf].buftype = "nofile"
+        if err then
+          vim.api.nvim_win_close(win, true)
+          return vim.notify(err, vim.log.levels.ERROR)
+        end
+        vim.bo[buf].modifiable = true
         vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(out, "\n", { plain = true }))
         vim.bo[buf].filetype = "git"
         vim.bo[buf].modifiable = false
-        vim.cmd("botright new")
-        vim.api.nvim_win_set_buf(0, buf)
-        vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = buf, desc = "Close commit preview" })
       end
     )
   end
@@ -1294,7 +1329,7 @@ function M.open(data)
       })
     else
       vim.list_extend(lines, {
-        "d           Show commit message and diff",
+        "K           Show commit details and diff",
         "D           Show dependencies and their status",
         "y           Copy the full commit ID",
       })
@@ -1564,6 +1599,7 @@ function M.open(data)
         vim.cmd.tabclose()
       end, "Close branch comparison")
     else
+      map("K", preview, "Show commit details")
       map("y", function()
         local item = current_commit()
         if item then
@@ -1585,7 +1621,6 @@ function M.open(data)
         map("<Space>", toggle_commit, "Toggle source commit selection")
       end
     end
-    map("d", preview, "Preview commit")
     map("p", pick, "Cherry-pick selected commits")
     map("r", function()
       refresh_picks()

@@ -36,7 +36,8 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim):
 The example installs Snacks as a dependency; omit it if you do not use Snacks.
 
 Call `require("git-branch-flow").open()` from a mapping or a dashboard action. Select a source
-branch; the current branch is the target. Open `g?` in the comparison for the available keys.
+branch; the current branch is the target. Press `K` in the Source or Current panel to view the
+commit under the cursor in a floating window. Open `g?` in the comparison for the available keys.
 
 ## Configuration
 
